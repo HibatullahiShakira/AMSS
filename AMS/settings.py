@@ -45,7 +45,7 @@ INSTALLED_APPS = [
     'billing',
     'users',
     'operations',
-
+    'rest_framework'
 ]
 
 MIDDLEWARE = [
