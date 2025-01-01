@@ -1,5 +1,7 @@
 from rest_framework import serializers
-from .models import Income, Expense, Transaction, Asset, Liability, Equity, Budget
+
+from .helper import generate_income_statement
+from .models import Income, Expense, Transaction, Asset, Liability, Equity, Budget, Business
 from django.utils import timezone
 
 
@@ -15,7 +17,17 @@ def validate_date(value):
     return value
 
 
-class IncomeSerializer(serializers.ModelSerializer):
+class BusinessAwareSerializer(serializers.ModelSerializer):
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        user = request.user
+        business = Business.objects.get(user=user)
+        validated_data['business'] = business
+        return super().create(validated_data)
+
+
+class IncomeSerializer(BusinessAwareSerializer):
     class Meta:
         model = Income
         fields = '__all__'
@@ -28,15 +40,15 @@ class IncomeSerializer(serializers.ModelSerializer):
             description=attrs['description']
         ).exists()
         if existing_income:
-            raise serializers.ValidationError("Income with the same date, source, and description already exists for "
-                                              "this user.")
+            raise serializers.ValidationError(
+                "Income with the same date, source, and description already exists for this user.")
         return super().validate(attrs)
 
     def validate_date(self, value):
         return validate_date(value)
 
 
-class ExpenseSerializer(serializers.ModelSerializer):
+class ExpenseSerializer(BusinessAwareSerializer):
     class Meta:
         model = Expense
         fields = '__all__'
@@ -57,13 +69,13 @@ class ExpenseSerializer(serializers.ModelSerializer):
         return validate_date(value)
 
 
-class TransactionSerializer(serializers.ModelSerializer):
+class TransactionSerializer(BusinessAwareSerializer):
     class Meta:
         model = Transaction
         fields = '__all__'
 
 
-class AssetSerializer(serializers.ModelSerializer):
+class AssetSerializer(BusinessAwareSerializer):
     class Meta:
         model = Asset
         fields = '__all__'
@@ -77,7 +89,7 @@ class AssetSerializer(serializers.ModelSerializer):
         return value
 
 
-class LiabilitySerializer(serializers.ModelSerializer):
+class LiabilitySerializer(BusinessAwareSerializer):
     class Meta:
         model = Liability
         fields = '__all__'
@@ -86,7 +98,7 @@ class LiabilitySerializer(serializers.ModelSerializer):
         return validate_positive(value)
 
 
-class EquitySerializer(serializers.ModelSerializer):
+class EquitySerializer(BusinessAwareSerializer):
     class Meta:
         model = Equity
         fields = '__all__'
@@ -95,7 +107,7 @@ class EquitySerializer(serializers.ModelSerializer):
         return validate_positive(value)
 
 
-class BudgetSerializer(serializers.ModelSerializer):
+class BudgetSerializer(BusinessAwareSerializer):
     class Meta:
         model = Budget
         fields = '__all__'
@@ -112,3 +124,38 @@ class BudgetSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("End date must be after the start date.")
         return value
 
+
+class GenerateIncomeStatementSerializer(BusinessAwareSerializer):
+    year = serializers.IntegerField(required=False)
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
+    period = serializers.ChoiceField(choices=['monthly', 'quarterly', 'yearly'], default='monthly')
+    currency = serializers.CharField(required=False)
+
+
+class IncomeStatementChartSerializer(serializers.Serializer):
+    period = serializers.ChoiceField(choices=['D', 'M', 'Y'], default='M')
+
+    def get_income_data(self, business):
+        income_records = Income.objects.filter(business=business)
+        return [{'date': record.date, 'source': record.source, 'amount': record.amount} for record in income_records]
+
+    def get_expense_data(self, business):
+        expense_records = Expense.objects.filter(business=business)
+        return [{'date': record.date, 'category': record.expense_category, 'amount': record.amount} for record in expense_records]
+
+    def to_representation(self, instance):
+        business_id = self.context['request'].user.business.id
+        period = self.validated_data.get('period', 'M')
+
+        income_data = self.get_income_data(business_id)
+        expense_data = self.get_expense_data(business_id)
+
+        analysis_result = generate_income_statement(income_data, expense_data, period)
+
+        return {
+            'income_data': analysis_result['income_data'],
+            'expense_data': analysis_result['expense_data'],
+            'income_time_series': analysis_result['income_time_series'],
+            'expense_time_series': analysis_result['expense_time_series']
+        }
