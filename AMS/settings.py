@@ -12,10 +12,8 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 import os
 from datetime import timedelta
-# import django.core.mail.backends.smtp
 from dotenv import load_dotenv
 from pathlib import Path
-# import djoser.serializers
 
 load_dotenv()
 
@@ -164,11 +162,13 @@ DJOSER = {
 
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
+    'rest_framework_simplejwt.authentication.JWTAuthentication',
 ]
 
 INTERNAL_IPS = [
     "127.0.0.1",
 ]
+
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

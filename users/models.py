@@ -19,7 +19,7 @@ class UserRole(models.Model):
 
 
 class Business(models.Model):
-    user = models.OneToOneField('User', null=True, blank=True, on_delete=models.CASCADE, related_name='business_profile')
+    user = models.ForeignKey('User', null=True, blank=True, on_delete=models.CASCADE, related_name='business_profile')
     business_name = models.CharField(max_length=255, unique=True)
     business_address = models.CharField(max_length=255)
     business_type = models.CharField(max_length=100)
@@ -55,10 +55,16 @@ class UserBusiness(models.Model):
 class User(AbstractUser):
     email = models.EmailField(unique=True)
     roles = models.ManyToManyField(UserRole, through='UserBusiness')
-    business = models.OneToOneField('Business', null=True, blank=True, on_delete=models.SET_NULL, related_name='owner')
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name='staff_members', null=True, blank=True)
+    phone_number = models.CharField(max_length=15, null=True, blank=True)
+    address = models.CharField(max_length=255, null=True, blank=True)
+    age = models.PositiveIntegerField(null=True, blank=True)
     groups = models.ManyToManyField(Group, related_name='custom_user_set')
     user_permissions = models.ManyToManyField(Permission, related_name='custom_user_set_permissions')
 
+    @classmethod
+    def get_with_business(cls, user_id):
+        return cls.objects.select_related('business').get(id=user_id)
     REQUIRED_FIELDS = ['email']
 
     def __str__(self):

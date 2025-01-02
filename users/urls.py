@@ -1,9 +1,10 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import BusinessViewSet
+from .views import BusinessRegistrationView, BusinessStaffRegistrationView
 
 router = DefaultRouter()
-router.register(r'business', BusinessViewSet, basename='business')
+router.register(r'business', BusinessRegistrationView, basename='business')
+router.register(r'register-business-staff', BusinessStaffRegistrationView, basename='register-business-staff')
 
 urlpatterns = [
     # path('auth/', include('djoser.urls')),

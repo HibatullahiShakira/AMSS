@@ -1,8 +1,61 @@
 from rest_framework import serializers
-from .models import Business
+from rest_framework_simplejwt.models import TokenUser
+from django.contrib.auth.models import Group
+from djoser.serializers import UserSerializer as DjoserUserSerializer
+from .models import User, Business
 
 
 class BusinessSerializer(serializers.ModelSerializer):
     class Meta:
         model = Business
         fields = '__all__'
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        user = request.user if request and not request.user.is_anonymous else None
+
+        if isinstance(user, TokenUser):
+            user = User.objects.get(id=user.id)
+
+        business = Business.objects.create(user=user, **validated_data)
+        return business
+
+
+class BusinessStaffSerializer(DjoserUserSerializer):
+    role = serializers.CharField(write_only=True)
+    user_role = serializers.SerializerMethodField()
+    phone_number = serializers.CharField(required=True)
+    address = serializers.CharField(required=True)
+    age = serializers.IntegerField(required=True)
+    business_id = serializers.PrimaryKeyRelatedField(queryset=Business.objects.all(), write_only=True)
+    username = serializers.CharField(required=True)
+
+    class Meta(DjoserUserSerializer.Meta):
+        fields = DjoserUserSerializer.Meta.fields + (
+            'username', 'first_name', 'last_name', 'role', 'business_id', 'phone_number', 'address', 'age', 'user_role')
+
+    def get_user_role(self, obj):
+        roles = obj.groups.values_list('name', flat=True)
+        return list(roles)
+
+    def create(self, validated_data):
+        role = validated_data.pop('role', None)
+        business = validated_data.pop('business_id', None)
+
+        if not validated_data.get('username'):
+            raise serializers.ValidationError({"username": "This field is required."})
+
+        if User.objects.filter(username=validated_data['username']).exists():
+            raise serializers.ValidationError({"username": "This username is already taken."})
+
+        user = User.objects.create(**validated_data)
+
+        if business:
+            user.business = business
+
+        if role:
+            group, created = Group.objects.get_or_create(name=role)
+            user.groups.add(group)
+
+        user.save()
+        return user
