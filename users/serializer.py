@@ -29,10 +29,11 @@ class BusinessStaffSerializer(DjoserUserSerializer):
     age = serializers.IntegerField(required=True)
     business_id = serializers.PrimaryKeyRelatedField(queryset=Business.objects.all(), write_only=True)
     username = serializers.CharField(required=True)
+    password = serializers.CharField(write_only=True, required=True)
 
     class Meta(DjoserUserSerializer.Meta):
         fields = DjoserUserSerializer.Meta.fields + (
-            'username', 'first_name', 'last_name', 'role', 'business_id', 'phone_number', 'address', 'age', 'user_role')
+            'username', 'first_name', 'last_name', 'role', 'business_id', 'phone_number', 'address', 'age', 'user_role', 'password')
 
     def get_user_role(self, obj):
         roles = obj.groups.values_list('name', flat=True)
@@ -41,6 +42,7 @@ class BusinessStaffSerializer(DjoserUserSerializer):
     def create(self, validated_data):
         role = validated_data.pop('role', None)
         business = validated_data.pop('business_id', None)
+        password = validated_data.pop('password', None)
 
         if not validated_data.get('username'):
             raise serializers.ValidationError({"username": "This field is required."})
@@ -49,6 +51,7 @@ class BusinessStaffSerializer(DjoserUserSerializer):
             raise serializers.ValidationError({"username": "This username is already taken."})
 
         user = User.objects.create(**validated_data)
+        user.set_password(password)
 
         if business:
             user.business = business

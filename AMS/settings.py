@@ -151,11 +151,11 @@ SIMPLE_JWT = {
 DJOSER = {
     # 'ACTIVATION_URL': 'auth/activate/{uid}/{token}/',
     # 'SEND_ACTIVATION_EMAIL': True,
+    'USER_ID_FIELD': 'id',
     'LOGIN_FIELD': 'username',
     'SERIALIZERS': {
         'user_create': 'djoser.serializers.UserCreateSerializer',
         'token_create': 'djoser.serializers.TokenCreateSerializer',
-        # 'user': 'users.serializer.UserSerializer',
         'current_user': 'djoser.serializers.UserSerializer',
     },
 }
@@ -169,7 +169,32 @@ INTERNAL_IPS = [
     "127.0.0.1",
 ]
 
-
+LOGGING = {
+    'version': 1,
+    'filters': {
+        'require_user_logged_in': {
+            'class': 'django.contrib.auth.views.RequireLoginView',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'DEBUG',  # Change to 'INFO' for less verbose output
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'djoser': {  # Add this line to log Djoser messages
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+    },
+}
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'

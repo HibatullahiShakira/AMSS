@@ -17,10 +17,13 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+from users.views import CustomUserViewSet
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('finance/', include('finance.urls')),
     path('auth/', include('djoser.urls')),
     path('auth/', include('djoser.urls.jwt')),
     path('user-business/', include('users.urls')),
+    path('auth/users/me/', CustomUserViewSet.as_view({'put': 'me', 'patch': 'me'}), name='user-me'),
 ]
