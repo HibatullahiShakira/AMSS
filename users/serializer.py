@@ -2,7 +2,7 @@ from rest_framework import serializers
 from rest_framework_simplejwt.models import TokenUser
 from django.contrib.auth.models import Group
 from djoser.serializers import UserSerializer as DjoserUserSerializer
-from .models import User, Business
+from .models import Business, User
 
 
 class BusinessSerializer(serializers.ModelSerializer):

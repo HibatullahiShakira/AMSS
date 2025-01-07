@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'django_filters',
     'djoser',
+    'debug_toolbar',
 ]
 
 MIDDLEWARE = [
@@ -57,6 +58,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'debug_toolbar.middleware.DebugToolbarMiddleware',
 ]
 
 ROOT_URLCONF = 'AMS.urls'
@@ -169,32 +171,6 @@ INTERNAL_IPS = [
     "127.0.0.1",
 ]
 
-LOGGING = {
-    'version': 1,
-    'filters': {
-        'require_user_logged_in': {
-            'class': 'django.contrib.auth.views.RequireLoginView',
-        },
-    },
-    'handlers': {
-        'console': {
-            'level': 'DEBUG',  # Change to 'INFO' for less verbose output
-            'class': 'logging.StreamHandler',
-        },
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': True,
-        },
-        'djoser': {  # Add this line to log Djoser messages
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': True,
-        },
-    },
-}
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'

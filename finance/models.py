@@ -2,12 +2,9 @@ from datetime import date
 from decimal import Decimal
 
 from django.conf import settings
-from django.contrib.auth.models import User
 from django.db import models
 
 from users.models import Business
-
-# Create your models here.
 
 
 CURRENCY_CHOICES = [
@@ -59,7 +56,7 @@ class Expense(models.Model):
     expense_category = models.CharField(max_length=50, choices=EXPENSE_CHOICES)
     description = models.TextField()
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    currency = models.CharField(max_length=15, choices=EXPENSE_CHOICES)
+    currency = models.CharField(max_length=15, choices=CURRENCY_CHOICES)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
 
     class Meta:
@@ -67,67 +64,6 @@ class Expense(models.Model):
 
     def __str__(self):
         return f"Expense {self.expense_category}: {self.currency}{self.amount} on {self.date}"
-
-
-class BankAccount(models.Model):
-    ACCOUNT_TYPE = [
-        ('CURRENT Account', 'current account'),
-        ('SAVINGS Account', 'savings account'),
-        ('Corporate Account', 'corporate account'),
-        ('Domiciliary Account', 'domiciliary account'),
-        ('Joint Account', 'joint account'),
-        ('Business Loan Account', 'business loan account')
-    ]
-    account_number = models.CharField(max_length=11)
-    account_name = models.CharField(max_length=15)
-    account_type = models.CharField(max_length=30, choices=ACCOUNT_TYPE)
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
-
-
-class BankStatement(models.Model):
-    TRANSACTION_TYPE = [
-        ('Credit', 'credit'),
-        ('Debit', 'debit')
-    ]
-
-    account_number = models.CharField(max_length=20)
-    date = models.DateField()
-    description = models.TextField()
-    amount = models.DecimalField(max_digits=20, decimal_places=2)
-    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPE)
-    balance = models.DecimalField(max_digits=20, decimal_places=2)
-    is_reconciled = models.BooleanField(default=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
-
-    class Meta:
-        ordering = ['date']
-
-    def __str__(self):
-        return f"{self.account_number} - {self.date} - {self.amount}"
-
-
-class Transaction(models.Model):
-    TRANSACTION_TYPES = [
-        ('INCOME', 'income'),
-        ('EXPENSE', 'expense'),
-        ('TRANSFER', 'transfer'),
-        ('OTHER', 'other')
-    ]
-
-    date = models.DateTimeField(auto_now=True),
-    amount = models.DecimalField(max_digits=20, decimal_places=2)
-    description = models.TextField()
-    transaction_types = models.CharField(10, choices=TRANSACTION_TYPES)
-    user_Id = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    currency = models.CharField(max_length=15, choices=CURRENCY_CHOICES)
-    bank_account_id = models.ForeignKey(BankAccount, on_delete=models.CASCADE)
-    reconciled = models.BooleanField(default=False)
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
-    matched_statement = models.ForeignKey(BankStatement, null=True, on_delete=models.SET_NULL)
-
-    def __str__(self):
-        return f"{self.transaction_types}:  {self.currency}{self.amount}"
 
 
 class Asset(models.Model):
@@ -144,6 +80,9 @@ class Asset(models.Model):
     VALUATION_METHOD = [
         ('Straight-Line', 'straight line'),
         ('Declining-Balance', 'declining-balance'),
+        ('Units-of-Production', 'units-of-production'),
+        ('Sum-of-the-Years-Digits', 'sum-of-the-years-digits'),
+        ('Double-Declining-Balance', 'double-declining-balance'),
         ('Appreciation', 'appreciation')
     ]
 
@@ -160,6 +99,11 @@ class Asset(models.Model):
     residual_value = models.DecimalField(max_digits=10, decimal_places=2, default=0, blank=False, null=False)
     valuation_method = models.CharField(max_length=30, choices=VALUATION_METHOD, blank=False, null=False)
     is_appreciating = models.BooleanField(default=False)
+    monthly_depreciation_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    yearly_depreciation_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    monthly_appreciation_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    yearly_appreciation_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    annual_maintenance_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
 
     def __str__(self):
@@ -171,6 +115,7 @@ class Asset(models.Model):
         useful_life = Decimal(str(self.useful_life))
         current_value = Decimal(str(self.current_value))
         date_acquired = Decimal(str(self.date_acquired))
+        useful_life_int = int(str(self.useful_life))
 
         if self.is_appreciating:
             if not self.appreciation_rate:
@@ -179,114 +124,22 @@ class Asset(models.Model):
                     self.appreciation_rate = ((current_value - amount) / amount) * 100
                 else:
                     self.appreciation_rate = Decimal(3.0)
+            self.yearly_appreciation_rate = self.appreciation_rate
+            self.monthly_appreciation_rate = self.appreciation_rate / 12
         else:
             if not self.depreciation_rate:
                 if self.valuation_method == 'Straight-Line':
                     self.depreciation_rate = ((amount - residual_value) / useful_life) / amount * 100
                 elif self.valuation_method == 'Declining-Balance':
                     self.depreciation_rate = (1 - (residual_value / amount) ** useful_life) * 100
+                elif self.valuation_method == 'Units-of-Production':
+                    self.depreciation_rate = ((amount - residual_value) / useful_life) * 100
+                elif self.valuation_method == 'Sum-of-the-Years-Digits':
+                    total_years = sum(range(1, useful_life_int + 1))
+                    self.depreciation_rate = ((amount - residual_value) * (useful_life / total_years)) * 100
+                elif self.valuation_method == 'Double-Declining-Balance':
+                    self.depreciation_rate = (2 / useful_life) * 100
+            self.yearly_depreciation_rate = self.depreciation_rate
+            self.monthly_depreciation_rate = self.depreciation_rate / 12
 
         super(Asset, self).save(*args, **kwargs)
-
-
-class Liability(models.Model):
-    LIABILITY_TYPE = [
-        ('Current', 'Current'),
-        ('Long-term', 'Long-term'),
-        ('Contingent', 'Contingent'),
-        ('Other', 'Other'), ]
-
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    name = models.CharField(max_length=50, blank=False, null=False)
-    amount = models.DecimalField(max_digits=20, decimal_places=2, blank=False, null=False)
-    description = models.TextField()
-    date_incurred = models.DateField()
-    liability_type = models.CharField(max_length=15, choices=LIABILITY_TYPE, blank=False, null=False)
-    interest_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    due_date = models.DateField()
-    paid_amount = models.DecimalField(max_digits=20, decimal_places=2, default=0)
-    creditor = models.ForeignKey('Creditor', on_delete=models.CASCADE, blank=True, null=True)
-    collateral = models.OneToOneField('Collateral', on_delete=models.SET_NULL, blank=True, null=True,
-                                      related_name='liability_collateral')
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
-
-    def get_outstanding_balance(self):
-        amount = Decimal(str(self.amount))
-        paid_amount = Decimal(str(self.paid_amount))
-        return amount - paid_amount
-
-    def __str__(self):
-        return f"{self.name} - {self.amount} ({self.liability_type})"
-
-
-class PaymentSchedule(models.Model):
-    liability = models.OneToOneField('Liability', on_delete=models.CASCADE, related_name='payment_schedule')
-    payment_frequency = models.CharField(max_length=50, choices=[
-        ('Weekly', 'Weekly'),
-        ('Bi-Weekly', 'Bi-Weekly'),
-        ('Monthly', 'Monthly'),
-        ('Quarterly', 'Quarterly'),
-        ('Semi-Annually', 'Semi-Annually'),
-        ('Annually', 'Annually'),
-    ])
-    start_date = models.DateField()
-    end_date = models.DateField(blank=True, null=True)
-    installment_amount = models.DecimalField(max_digits=20, decimal_places=2, blank=True, null=True)
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-
-    def __str__(self):
-        return f"Payment Schedule for {self.liability.name}"
-
-
-class Creditor(models.Model):
-    name = models.CharField(max_length=255, blank=False, null=False)
-    contact_person = models.CharField(max_length=255, blank=True, null=True)
-    phone_number = models.CharField(max_length=20, blank=True, null=True)
-    email = models.EmailField(blank=True, null=True)
-    address = models.TextField(blank=True, null=True)
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-
-    def __str__(self):
-        return self.name
-
-
-class Collateral(models.Model):
-    liability = models.OneToOneField('Liability', on_delete=models.CASCADE, related_name='liability_collateral')
-    description = models.TextField(blank=True, null=True)
-    value = models.DecimalField(max_digits=20, decimal_places=2, blank=True, null=True)
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-
-    def __str__(self):
-        return f"Collateral for {self.liability.name}"
-
-
-class Equity(models.Model):
-    EQUITY_TYPE = [
-        ('Common Stock', 'Common Stock'),
-        ('Preferred Stock', 'Preferred Stock'),
-        ('Retained Earnings', 'Retained Earnings'),
-        ('Other', 'Other'), ]
-
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    name = models.CharField(max_length=255)
-    description = models.TextField(blank=True, null=True)
-    amount = models.DecimalField(max_digits=20, decimal_places=2)
-    date_issued = models.DateField()
-    equity_type = models.CharField(max_length=50, choices=EQUITY_TYPE)
-    dividend_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
-
-
-class Budget(models.Model):
-    budget_name = models.CharField(max_length=50, null=False, blank=False)
-    amount = models.DecimalField(max_digits=20, decimal_places=2)
-    start_date = models.DateField()
-    end_date = models.DateField()
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-
-    def __str__(self):
-        return f"{self.budget_name}: Total amount for the budget is{self.amount}"

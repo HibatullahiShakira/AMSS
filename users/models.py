@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import AbstractUser, Permission, Group
 
@@ -19,7 +20,7 @@ class UserRole(models.Model):
 
 
 class Business(models.Model):
-    user = models.ForeignKey('User', null=True, blank=True, on_delete=models.CASCADE, related_name='business_profile')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name='business_profile')
     business_name = models.CharField(max_length=255, unique=True)
     business_address = models.CharField(max_length=255)
     business_type = models.CharField(max_length=100)
@@ -44,7 +45,7 @@ class Business(models.Model):
 
 
 class UserBusiness(models.Model):
-    user = models.ForeignKey('User',  on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL,  on_delete=models.CASCADE)
     business = models.ForeignKey(Business, on_delete=models.CASCADE)
     role = models.ForeignKey(UserRole, on_delete=models.SET_NULL, null=True)
 
