@@ -1,5 +1,7 @@
+from decimal import Decimal
+
 from rest_framework import serializers
-from .models import Income, Business, Expense, Asset
+from .models import Income, Business, Expense, Asset, Liability, PaymentSchedule, Creditor, Collateral
 from users.models import User
 from rest_framework_simplejwt.models import TokenUser
 
@@ -168,4 +170,57 @@ class ScenarioSerializer(serializers.Serializer):
     best_case = serializers.FloatField()
     worst_case = serializers.FloatField()
     most_likely = serializers.FloatField()
+
+
+class RiskToleranceSerializer(serializers.Serializer):
+    risk_tolerance = serializers.ChoiceField(choices=['low', 'moderate', 'high'], default='moderate')
+
+
+class ExplainScenarioSerializer(serializers.Serializer):
+    year = serializers.IntegerField()
+    explanation = serializers.CharField()
+
+
+class StorySerializer(serializers.Serializer):
+    year = serializers.IntegerField()
     story = serializers.CharField()
+
+
+class ScenarioQueryParamsSerializer(serializers.Serializer):
+    year = serializers.IntegerField(default=1, min_value=1, max_value=5)
+    risk_tolerance = serializers.ChoiceField(choices=['low', 'moderate', 'high'], default='moderate')
+
+
+class LiabilitySerializer(BusinessAwareSerializer):
+    class Meta:
+        model = Liability
+        fields = '__all__'
+
+
+class PaymentScheduleSerializer(BusinessAwareSerializer):
+    def update(self, instance, validated_data):
+        installment_amount = validated_data.get('installment_amount')
+        instance.installment_amount = installment_amount
+
+        liability = instance.liability
+        liability.paid_amount += Decimal(installment_amount)
+        liability.save()
+
+        instance.save()
+        return instance
+
+    class Meta:
+        model = PaymentSchedule
+        fields = '__all__'
+
+
+class CreditorSerializer(BusinessAwareSerializer):
+    class Meta:
+        model = Creditor
+        fields = '__all__'
+
+
+class CollateralSerializer(BusinessAwareSerializer):
+    class Meta:
+        model = Collateral
+        fields = '__all__'

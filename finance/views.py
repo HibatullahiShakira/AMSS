@@ -4,10 +4,13 @@ from rest_framework.decorators import action
 from rest_framework_simplejwt.models import TokenUser
 
 from users.models import User
-from .helpers import generate_asset_project_simulations, get_comprehensive_breakdown, explain_scenario_keys
-from .models import Income, Expense, Asset
+from .helpers import generate_asset_project_simulations, get_comprehensive_breakdown, explain_scenario_keys, \
+    generate_asset_report, calculate_total_liabilities, calculate_total_assets
+from .models import Income, Expense, Asset, Liability, PaymentSchedule, Creditor, Collateral
 from .serializers import IncomeSerializer, ExpenseSerializer, AssetListSerializer, AssetDetailSerializer, \
-    ScenarioSerializer
+    ScenarioSerializer, RiskToleranceSerializer, StorySerializer, ExplainScenarioSerializer, \
+    ScenarioQueryParamsSerializer, LiabilitySerializer, PaymentScheduleSerializer, CreditorSerializer, \
+    CollateralSerializer
 from .permissions import IsOwnerAdminManagerOrReadonly, IsOwnerOrAdmin
 
 
@@ -230,6 +233,19 @@ class AssetViewSet(viewsets.ModelViewSet):
         appreciation_value = asset.appreciation_rate
         return JsonResponse({'appreciation_value': appreciation_value})
 
+    @action(detail=False, methods=['get'], url_path='total-assets')
+    def total_assets(self, request):
+        user = request.user
+        business = getattr(user, 'business', None)
+
+        if business is None:
+            return JsonResponse({"error": "User has no associated business."}, status=400)
+
+        assets = Asset.objects.filter(business=business)
+        total = calculate_total_assets(assets)
+
+        return JsonResponse({"total_assets": total})
+
 
 class AssetProjectSimulation(viewsets.ViewSet):
     permission_classes = [IsOwnerOrAdmin]
@@ -242,9 +258,11 @@ class AssetProjectSimulation(viewsets.ViewSet):
         return asset
 
     @action(detail=True, methods=['get'])
-    def scenario_analysis(self, request, pk=None):
+    def asset_analysis(self, request, pk=None):
         asset = self.get_asset(pk)
-        risk_tolerance = request.query_params.get('risk_tolerance', 'moderate')
+        risk_tolerance_serializer = RiskToleranceSerializer(data=request.query_params)
+        risk_tolerance_serializer.is_valid(raise_exception=True)
+        risk_tolerance = risk_tolerance_serializer.validated_data['risk_tolerance']
         scenarios = generate_asset_project_simulations(asset, risk_tolerance=risk_tolerance)
         serializer = ScenarioSerializer(scenarios, many=True)
         return JsonResponse(serializer.data, safe=False)
@@ -261,4 +279,54 @@ class AssetProjectSimulation(viewsets.ViewSet):
         year = int(request.query_params.get('year', 1))
         scenarios = generate_asset_project_simulations(asset)
         explanation = explain_scenario_keys(asset, year, scenarios)
-        return JsonResponse(explanation)
+        serializer = ExplainScenarioSerializer({'year': year, 'explanation': explanation})
+        return JsonResponse(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def generate_asset_report(self, request, pk=None):
+        asset = self.get_asset(pk)
+        params_serializer = ScenarioQueryParamsSerializer(data=request.query_params)
+        params_serializer.is_valid(raise_exception=True)
+        year = params_serializer.validated_data['year']
+        risk_tolerance = params_serializer.validated_data['risk_tolerance']
+        scenarios = generate_asset_project_simulations(asset, risk_tolerance=risk_tolerance)
+        story = generate_asset_report(asset, year, scenarios, risk_tolerance)
+        serializer = StorySerializer({'year': year, 'story': story})
+        return JsonResponse(serializer.data)
+
+
+class LiabilityViewSet(viewsets.ModelViewSet):
+    queryset = Liability.objects.all()
+    serializer_class = LiabilitySerializer
+    permission_classes = [IsOwnerOrAdmin]
+
+    @action(detail=False, methods=['get'], url_path='total-liabilities')
+    def total_liabilities(self, request):
+        user = request.user
+        business = getattr(user, 'business', None)
+
+        if business is None:
+            return JsonResponse({"error": "User has no associated business."}, status=400)
+
+        liabilities = Liability.objects.filter(business=business)
+        total = calculate_total_liabilities(liabilities)
+
+        return JsonResponse({"total_liabilities": total})
+
+
+class PaymentScheduleViewSet(viewsets.ModelViewSet):
+    queryset = PaymentSchedule.objects.all()
+    serializer_class = PaymentScheduleSerializer
+    permission_classes = [IsOwnerOrAdmin]
+
+
+class CreditorViewSet(viewsets.ModelViewSet):
+    queryset = Creditor.objects.all()
+    serializer_class = CreditorSerializer
+    permission_classes = [IsOwnerOrAdmin]
+
+
+class CollateralViewSet(viewsets.ModelViewSet):
+    queryset = Collateral.objects.all()
+    serializer_class = CollateralSerializer
+    permission_classes = [IsOwnerOrAdmin]

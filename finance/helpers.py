@@ -62,6 +62,10 @@ def generate_asset_project_simulations(asset, num_simulations=1000, risk_toleran
     appreciation_rate = float(asset.appreciation_rate) / 100
     depreciation_rate = float(asset.depreciation_rate) / 100
 
+    if not depreciation_rate and not is_appreciating:
+        depreciation_rate = (float(asset.amount) - float(asset.residual_value)) / (
+                float(asset.amount) * asset.useful_life)
+
     historical_rates = []
     for year in range(1, 6):
         if is_appreciating:
@@ -98,7 +102,7 @@ def generate_asset_project_simulations(asset, num_simulations=1000, risk_toleran
     for year in range(5):
         scenario = {
             'year': year + 1,
-            'mean_value': round(mean_future_values[year], 2),  # Round to 2 decimal places
+            'mean_value': round(mean_future_values[year], 2),
             'std_dev': round(std_dev_future_values[year], 2),
             'percentile_25': round(percentile_25[year], 2),
             'percentile_75': round(percentile_75[year], 2),
@@ -106,37 +110,52 @@ def generate_asset_project_simulations(asset, num_simulations=1000, risk_toleran
             'percentile_95': round(percentile_95[year], 2),
             'best_case': round(percentile_95[year], 2),
             'worst_case': round(percentile_5[year], 2),
-            'most_likely': round(mean_future_values[year], 2),
-            'story': ''
+            'most_likely': round(mean_future_values[year], 2)
         }
-
-        if is_appreciating:
-            if risk_tolerance == "low":
-                scenario[
-                    'story'] = (f"In the best-case scenario, the asset's value could appreciate significantly, "
-                                f"potentially reaching ${scenario['best_case']} in year {year + 1}. However, "
-                                f"for those who are risk-averse, the value could also drop below $"
-                                f"{scenario['worst_case']}.")
-            elif risk_tolerance == "high":
-                scenario[
-                    'story'] = (f"If you're feeling adventurous, there's potential for significant gains! The asset's "
-                                f"value could reach as high as ${scenario['best_case']} in year {year + 1}. But be "
-                                f"cautious, as it could also dip to ${scenario['worst_case']}.")
-            else:  # Default to moderate
-                scenario[
-                    'story'] = f"Over the next few years, you can expect the asset's value to be around ${scenario['mean_value']} in year {year + 1}. There's room for variation, with possible values ranging from ${scenario['percentile_25']} to ${scenario['percentile_75']}."
-
-        else:
-            warnings = generate_depreciation_warning(asset)
-            if warnings:
-                scenario[
-                    'story'] = (f"In {year + 1} years, the asset may depreciate, and here are some things to watch out "
-                                f"for: {', '.join(warnings)}. Keep in mind that the most likely value could"
-                                f" be around ${scenario['most_likely']}.")
 
         scenarios.append(scenario)
 
     return scenarios
+
+
+def generate_asset_report(asset, year, scenarios, risk_tolerance="moderate"):
+    scenario = next((s for s in scenarios if s['year'] == year), None)
+    if not scenario:
+        return "Scenario not found for the given year."
+
+    story = f"In year {year}, your {asset.name} is expected to be worth around ${scenario['most_likely']}.\n"
+
+    if risk_tolerance == "low":
+        story += f"There's a possibility the value could drop as low as ${scenario['worst_case']}. "
+        story += "To minimize potential losses, consider:\n"
+        story += "  - **Regular maintenance:** Ensure proper maintenance to extend the asset's lifespan.\n"
+        story += "  - **Diversification:** Spread your investments across different assets to reduce overall risk.\n"
+        story += "  - **Insurance:** Explore insurance options to protect against unforeseen damage or loss.\n"
+    elif risk_tolerance == "high":
+        story += f"On the bright side, the value could potentially reach as high as ${scenario['best_case']}. "
+        story += "To capitalize on potential gains:\n"
+        story += "  - **Invest in upgrades:** Consider upgrading the asset to enhance its performance and value.\n"
+        story += ("- **Explore potential for increased utilization:** Find ways to increase the asset's usage and "
+                  "generate more revenue.\n")
+    else:
+        story += f"The range of potential values falls between ${scenario['percentile_25']} and ${scenario['percentile_75']}. "
+        story += "To navigate this uncertainty:\n"
+        story += ("- **Monitor market trends:** Stay informed about market conditions that could affect the asset's "
+                  "value.\n")
+        story += ("- **Regularly review your investment strategy:** Adjust your strategy based on market changes and "
+                  "your financial goals.\n")
+
+    if asset.is_appreciating:
+        story += ("As this asset is expected to appreciate, consider holding onto it for the long term to potentially "
+                  "realize significant gains.\n")
+    else:
+        warnings = generate_depreciation_warning(asset)
+        if warnings:
+            story += f"Watch out for potential depreciation due to {', '.join(warnings)}. "
+            story += ("Consider these factors when making decisions about the asset's future and potential replacement "
+                      "options.\n")
+
+    return story
 
 
 def get_comprehensive_breakdown(asset):
@@ -167,23 +186,23 @@ def get_comprehensive_breakdown(asset):
 
 
 def explain_scenario_keys(asset, year, scenarios):
-    scenario = next((s for s in scenarios if s['year'] == year), None)
+    scenario = [s for s in scenarios if s['year'] == year]
     if not scenario:
-        return {'error': 'Year not found in scenarios.'}
+        return "Scenario not found for the given year."
+    scenario = scenario[0]  # Extract the first (and only) element from the list
 
     explanation = {
-        'mean_value': f"The average value of the asset is ${scenario['mean_value']}, which is the most likely value it could have in year {year}.",
-        'std_dev': f"The value could vary by about ${scenario['std_dev']} from the mean value, indicating some uncertainty in the asset's future value. This means the actual value could be higher or lower than the average.",
-        'percentile_5': f"In the worst-case scenario, the asset's value could drop to ${scenario['percentile_5']} in year {year}. This is the value below which 5% of the simulations fall.",
-        'percentile_25': f"In a less favorable scenario, the asset's value could be around ${scenario['percentile_25']} in year {year}. This is the value below which 25% of the simulations fall.",
-        'percentile_75': f"In a more favorable scenario, the asset's value could be around ${scenario['percentile_75']} in year {year}. This is the value below which 75% of the simulations fall.",
-        'percentile_95': f"In the best-case scenario, the asset's value could rise to ${scenario['percentile_95']} in year {year}. This is the value below which 95% of the simulations fall.",
-        'best_case': f"If everything goes perfectly, the asset's value could reach ${scenario['best_case']} in year {year}.",
-        'worst_case': f"If things go poorly, the asset's value could drop to ${scenario['worst_case']} in year {year}.",
-        'most_likely': f"Given all the possibilities, the most probable value for the asset in year {year} is ${scenario['most_likely']}.",
-        'story': scenario['story']
+        'year': year,
+        'mean_value': f"The average expected value of the asset for year {year} is ${scenario['mean_value']}.",
+        'std_dev': f"Risk: The value might vary by about ${scenario['std_dev']} from the average.",
+        'percentile_25': f"25% chance the value will be less than ${scenario['percentile_25']}.",
+        'percentile_75': f"75% chance the value will be less than ${scenario['percentile_75']}.",
+        'percentile_5': f"5% chance the value will be less than ${scenario['percentile_5']}.",
+        'percentile_95': f"95% chance the value will be less than ${scenario['percentile_95']}.",
+        'best_case': f"Best possible value in year {year} is ${scenario['best_case']}.",
+        'worst_case': f"Worst possible value in year {year} is ${scenario['worst_case']}.",
+        'most_likely': f"The value you can most likely expect in year {year} is ${scenario['most_likely']}."
     }
-
     return explanation
 
 
