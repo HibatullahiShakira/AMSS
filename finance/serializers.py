@@ -1,7 +1,11 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from rest_framework import serializers
-from .models import Income, Business, Expense, Asset, Liability, PaymentSchedule, Creditor, Collateral
+
+from .helpers import generate_payment_schedule
+from .models import Income, Business, Expense, Asset, Liability, PaymentSchedule, Creditor, Collateral, \
+    PaymentInstallment, Customer, Supplier, AccountsReceivable, AccountsPayable, CashFlowForecast
 from users.models import User
 from rest_framework_simplejwt.models import TokenUser
 
@@ -119,7 +123,7 @@ class ExpenseSerializer(BusinessAwareSerializer):
 class AssetListSerializer(BusinessAwareSerializer):
     class Meta:
         model = Asset
-        fields = ['user', 'name', 'description', 'amount', 'date_acquired', 'asset_types', 'business']
+        fields = ['id', 'user', 'name', 'description', 'amount', 'date_acquired', 'asset_types', 'business']
 
 
 class AssetDetailSerializer(BusinessAwareSerializer):
@@ -224,3 +228,172 @@ class CollateralSerializer(BusinessAwareSerializer):
     class Meta:
         model = Collateral
         fields = '__all__'
+
+
+class GeneratePaymentScheduleSerializer(serializers.Serializer):
+    principal = serializers.DecimalField(max_digits=20, decimal_places=2)
+    interest_rate = serializers.DecimalField(max_digits=10, decimal_places=2)
+    term_years = serializers.IntegerField()
+    payment_frequency = serializers.ChoiceField(choices=[
+        ('Weekly', 'Weekly'),
+        ('Bi-Weekly', 'Bi-Weekly'),
+        ('Monthly', 'Monthly'),
+        ('Quarterly', 'Quarterly'),
+        ('Semi-Annually', 'Semi-Annually'),
+        ('Annually', 'Annually'),
+    ])
+    start_date = serializers.DateField()
+    liability_name = serializers.CharField(max_length=50)
+
+    def create(self, validated_data):
+        principal = validated_data['principal']
+        interest_rate = validated_data['interest_rate']
+        term_years = validated_data['term_years']
+        payment_frequency = validated_data['payment_frequency']
+        start_date = validated_data['start_date']
+        user = self.context['request'].user
+
+        if isinstance(user, TokenUser):
+            user = User.objects.get(id=user.id)
+
+        name = validated_data['liability_name']
+
+        print(f"user: {user}")
+        print(f"name: {name}")
+        print(f"business: {user.business}")
+
+        # Check if user has an associated business
+        if not user.business:
+            raise serializers.ValidationError("User has no associated business.")
+
+        payments = generate_payment_schedule(principal, interest_rate, term_years, payment_frequency, start_date)
+
+        liability, created = Liability.objects.get_or_create(
+            user=user,
+            name=name,
+            defaults={
+                'amount': principal,
+                'interest_rate': interest_rate,
+                'liability_type': 'Current',
+                'business': user.business,
+                'date_incurred': start_date,
+                'due_date': start_date + timedelta(days=term_years * 365),
+                'paid_amount': Decimal('0.00')
+            }
+        )
+
+        print(f"liability: {liability}, created: {created}")
+
+        payment_schedule = PaymentSchedule.objects.create(
+            liability=liability,
+            payment_frequency=payment_frequency,
+            start_date=start_date,
+            end_date=start_date + timedelta(days=term_years * 365),
+            business=user.business,
+            user=user
+        )
+
+        print(f"payment_schedule: {payment_schedule}")
+
+        payment_installments = []
+        for payment in payments:
+            payment_installment = PaymentInstallment(
+                schedule=payment_schedule,
+                date=payment['date'],
+                principal=payment['principal'],
+                interest=payment['interest'],
+                remaining_principal=payment['remaining_principal']
+            )
+            payment_installments.append(payment_installment)
+
+        PaymentInstallment.objects.bulk_create(payment_installments)
+
+        # Prepare JSON serializable response
+        installments_data = [
+            {
+                'date': installment.date,
+                'principal': str(installment.principal),
+                'interest': str(installment.interest),
+                'remaining_principal': str(installment.remaining_principal)
+            } for installment in payment_installments
+        ]
+
+        response_data = {
+            "schedule": {
+                'id': payment_schedule.id,
+                'liability': payment_schedule.liability.id,
+                'payment_frequency': payment_schedule.payment_frequency,
+                'start_date': payment_schedule.start_date,
+                'end_date': payment_schedule.end_date,
+                'business': payment_schedule.business.id,
+                'user': payment_schedule.user.id
+            },
+            "installments": installments_data
+        }
+
+        return response_data
+
+
+class CustomerSerializer(BusinessAwareSerializer):
+    class Meta:
+        model = Customer
+        fields = '__all__'
+
+
+class SupplierSerializer(BusinessAwareSerializer):
+    class Meta:
+        model = Supplier
+        fields = '__all__'
+
+
+class AccountsReceivableSerializer(BusinessAwareSerializer):
+    class Meta:
+        model = AccountsReceivable
+        fields = '__all__'
+
+
+class AccountsPayableSerializer(BusinessAwareSerializer):
+    class Meta:
+        model = AccountsPayable
+        fields = '__all__'
+
+
+class CashFlowForecastSerializer(BusinessAwareSerializer):
+    class Meta:
+        model = CashFlowForecast
+        fields = '__all__'
+
+
+class ProjectionInputSerializer(serializers.Serializer):
+    period = serializers.ChoiceField(choices=['daily', 'weekly', 'bi-weekly', 'monthly', 'quarterly', 'yearly'],
+                                     default='monthly')
+    forecast_steps = serializers.IntegerField(min_value=1, default=12)
+    seasonal_period = serializers.IntegerField(min_value=1, default=12)
+
+
+class PendingPaymentSummaryForPeriodSerializer(serializers.Serializer):
+    total_pending_receivables_for_period = serializers.DecimalField(max_digits=20, decimal_places=2)
+    total_pending_payable_for_period = serializers.DecimalField(max_digits=20, decimal_places=2)
+    remaining_balance_for_period = serializers.DecimalField(max_digits=20, decimal_places=2)
+
+
+class PendingPaymentSummarySerializer(serializers.Serializer):
+    total_pending_receivables = serializers.DecimalField(max_digits=20, decimal_places=2)
+    total_pending_payable = serializers.DecimalField(max_digits=20, decimal_places=2)
+    remaining_balance = serializers.DecimalField(max_digits=20, decimal_places=2)
+
+
+class DateRangeSerializer(serializers.Serializer):
+    start_date = serializers.DateField(required=True, format='%Y-%m-%d')
+    end_date = serializers.DateField(required=True, format='%Y-%m-%d')
+
+
+class PeriodSerializer(serializers.Serializer):
+    period = serializers.ChoiceField(choices=['daily', 'monthly', 'quarterly', 'yearly'], required=True)
+
+
+class RealTimeMonitoringSerializer(serializers.Serializer):
+    threshold = serializers.IntegerField(required=True)
+
+
+

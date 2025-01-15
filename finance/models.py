@@ -26,7 +26,7 @@ class Income(models.Model):
     date = models.DateTimeField(auto_now_add=True)
     amount = models.DecimalField(max_digits=20, decimal_places=2)
     source = models.CharField(max_length=15, choices=SOURCE_CHOICES)
-    description = models.TextField()
+    description = models.CharField(max_length=255)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     currency = models.CharField(max_length=15, choices=CURRENCY_CHOICES)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
@@ -53,7 +53,7 @@ class Expense(models.Model):
     date = models.DateTimeField(auto_now_add=True)
     amount = models.DecimalField(max_digits=20, decimal_places=2)
     expense_category = models.CharField(max_length=50, choices=EXPENSE_CHOICES)
-    description = models.TextField()
+    description = models.CharField(max_length=255)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     currency = models.CharField(max_length=15, choices=CURRENCY_CHOICES)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
@@ -66,14 +66,14 @@ class Expense(models.Model):
 
 
 class Asset(models.Model):
-    ASSET_TYPE = [
-        ('Current', 'current'),
-        ('Fixed', 'fixed'),
-        ('Intangible', 'intangible'),
-        ('Investment', 'investment'),
-        ('Other', 'other'),
-        ('Real Estate', 'real estate'),
-        ('Land', 'land')
+    FIXED_ASSET_TYPES = [
+        ('Building', 'Building'),
+        ('Machinery', 'Machinery'),
+        ('Equipment', 'Equipment'),
+        ('Vehicles', 'Vehicles'),
+        ('Furniture', 'Furniture'),
+        ('Land', 'Land'),
+        ('Other', 'Other'),
     ]
 
     VALUATION_METHOD = [
@@ -87,10 +87,10 @@ class Asset(models.Model):
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     name = models.CharField(max_length=50, blank=False, null=False)
-    description = models.TextField()
+    description = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=20, decimal_places=2, blank=False, null=False)
     date_acquired = models.PositiveSmallIntegerField()
-    asset_types = models.CharField(max_length=20, choices=ASSET_TYPE)
+    asset_types = models.CharField(max_length=20, choices=FIXED_ASSET_TYPES)
     depreciation_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     appreciation_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     current_value = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -154,7 +154,7 @@ class Liability(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     name = models.CharField(max_length=50, blank=False, null=False)
     amount = models.DecimalField(max_digits=20, decimal_places=2, blank=False, null=False)
-    description = models.TextField()
+    description = models.CharField(max_length=255)
     date_incurred = models.DateField()
     liability_type = models.CharField(max_length=15, choices=LIABILITY_TYPE, blank=False, null=False)
     interest_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -175,7 +175,7 @@ class Liability(models.Model):
 
 
 class PaymentSchedule(models.Model):
-    liability = models.ForeignKey('Liability', on_delete=models.CASCADE, related_name='payment_schedule')
+    liability = models.ForeignKey('Liability', on_delete=models.CASCADE, related_name='payment_schedules')
     payment_frequency = models.CharField(max_length=50, choices=[
         ('Weekly', 'Weekly'),
         ('Bi-Weekly', 'Bi-Weekly'),
@@ -186,7 +186,6 @@ class PaymentSchedule(models.Model):
     ])
     start_date = models.DateField()
     end_date = models.DateField(blank=True, null=True)
-    installment_amount = models.DecimalField(max_digits=20, decimal_places=2, blank=True, null=True)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
 
@@ -194,12 +193,23 @@ class PaymentSchedule(models.Model):
         return f"Payment Schedule for {self.liability.name}"
 
 
+class PaymentInstallment(models.Model):
+    schedule = models.ForeignKey('PaymentSchedule', on_delete=models.CASCADE, related_name='installments')
+    date = models.DateField()
+    principal = models.DecimalField(max_digits=20, decimal_places=2)
+    interest = models.DecimalField(max_digits=20, decimal_places=2)
+    remaining_principal = models.DecimalField(max_digits=20, decimal_places=2)
+
+    def __str__(self):
+        return f"Installment due on {self.date} for {self.schedule.liability.name}"
+
+
 class Creditor(models.Model):
     name = models.CharField(max_length=255, blank=False, null=False)
     contact_person = models.CharField(max_length=255, blank=True, null=True)
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     email = models.EmailField(blank=True, null=True)
-    address = models.TextField(blank=True, null=True)
+    address = models.CharField(max_length=255, blank=True, null=True)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
 
@@ -209,11 +219,63 @@ class Creditor(models.Model):
 
 class Collateral(models.Model):
     liability = models.ForeignKey('Liability', on_delete=models.CASCADE, related_name='liability_collateral')
-    description = models.TextField(blank=True, null=True)
+    description = models.CharField(max_length=255, blank=True, null=True)
     value = models.DecimalField(max_digits=20, decimal_places=2, blank=True, null=True)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    asset = models.ForeignKey('Liability', on_delete=models.CASCADE, related_name='collateral_asset', null=True, blank=True)
+    asset = models.ForeignKey('Liability', on_delete=models.CASCADE, related_name='collateral_asset', null=True,
+                              blank=True)
 
     def __str__(self):
         return f"Collateral for {self.liability.name}"
+
+
+class Customer(models.Model):
+    name = models.CharField(max_length=100)
+    contact_info = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now_add=True, null=False, blank=False)
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+
+
+class Supplier(models.Model):
+    name = models.CharField(max_length=100)
+    contact_info = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now_add=True, null=False, blank=False)
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)
+
+
+class AccountsReceivable(models.Model):
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE)
+    amount_due = models.DecimalField(max_digits=20, decimal_places=2)
+    due_date = models.DateField()
+    status = models.CharField(max_length=50, choices=[('Pending', 'Pending'), ('Paid', 'Paid')])
+    created_at = models.DateField(auto_now_add=True)
+    # updated_at = models.DateField(auto_now=True, null=False, blank=False)
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)
+
+
+class AccountsPayable(models.Model):
+    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
+    amount_due = models.DecimalField(max_digits=20, decimal_places=2)
+    due_date = models.DateField()
+    status = models.CharField(max_length=50, choices=[('Pending', 'Pending'), ('Paid', 'Paid')])
+    created_at = models.DateField(auto_now_add=True)
+    # updated_at = models.DateField(auto_now=True, null=False, blank=False)
+    business = models.ForeignKey(Business, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)
+
+
+class CashFlowForecast(models.Model):
+    date = models.DateField()
+    predicted_inflow = models.DecimalField(max_digits=20, decimal_places=2)
+    predicted_outflow = models.DecimalField(max_digits=20, decimal_places=2)
+    net_cash_flow = models.DecimalField(max_digits=20, decimal_places=2)
+    created_at = models.DateField(auto_now_add=True)
+    updated_at = models.DateField(auto_now=True)
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)

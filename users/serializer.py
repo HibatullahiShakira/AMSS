@@ -21,6 +21,23 @@ class BusinessSerializer(serializers.ModelSerializer):
         return business
 
 
+class CustomUpdateBusinessSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Business
+        fields = ['name', 'description', 'address', 'phone', 'email']  # Include all relevant fields
+
+    def update(self, instance, validated_data):
+        user = self.context['request'].user
+        instance.user = user
+        instance.business = user.business
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        instance.save()
+        return instance
+
+
 class BusinessStaffSerializer(DjoserUserSerializer):
     role = serializers.CharField(write_only=True)
     user_role = serializers.SerializerMethodField()
@@ -33,7 +50,8 @@ class BusinessStaffSerializer(DjoserUserSerializer):
 
     class Meta(DjoserUserSerializer.Meta):
         fields = DjoserUserSerializer.Meta.fields + (
-            'username', 'first_name', 'last_name', 'role', 'business_id', 'phone_number', 'address', 'age', 'user_role', 'password')
+            'username', 'first_name', 'last_name', 'role', 'business_id', 'phone_number', 'address', 'age', 'user_role',
+            'password')
 
     def get_user_role(self, obj):
         roles = obj.groups.values_list('name', flat=True)

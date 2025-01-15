@@ -1,9 +1,348 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
-from random import random
 from django.db.models import Sum
 import numpy as np
 from datetime import date
+from finance.models import PaymentSchedule, Income, Expense, AccountsReceivable, AccountsPayable
+import pandas as pd
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from pmdarima import auto_arima
+from django.db import models
+
+
+def perform_projection(business, period, forecast_steps, seasonal_period):
+    incomes = list(Income.objects.filter(business=business).values('date', 'amount'))
+    expenses = list(Expense.objects.filter(business=business).values('date', 'amount'))
+
+    if not incomes:
+        raise ValueError("No income data found for the business.")
+    if not expenses:
+        raise ValueError("No expense data found for the business.")
+
+    df_incomes = pd.DataFrame(incomes)
+    df_expenses = pd.DataFrame(expenses)
+
+    df_incomes['amount'] = pd.to_numeric(df_incomes['amount'], errors='coerce')
+    df_expenses['amount'] = pd.to_numeric(df_expenses['amount'], errors='coerce')
+
+    if 'date' not in df_incomes.columns or 'date' not in df_expenses.columns:
+        raise KeyError("'date' column missing from income or expense data.")
+
+    df_incomes.sort_values('date', inplace=True)
+    df_expenses.sort_values('date', inplace=True)
+    df_incomes.rename(columns={'amount': 'inflow'}, inplace=True)
+    df_expenses.rename(columns={'amount': 'outflow'}, inplace=True)
+    df = pd.merge(df_incomes, df_expenses, on='date', how='outer').fillna(0)
+    df['net_cash_flow'] = df['inflow'] - df['outflow']
+    df['date'] = pd.to_datetime(df['date'])
+    df.set_index('date', inplace=True)
+
+    if period == 'daily':
+        cash_flow = df.resample('D').sum()['net_cash_flow']
+    elif period == 'weekly':
+        cash_flow = df.resample('W').sum()['net_cash_flow']
+    elif period == 'bi-weekly':
+        cash_flow = df.resample('2W').sum()['net_cash_flow']
+    elif period == 'quarterly':
+        cash_flow = df.resample('Q').sum()['net_cash_flow']
+    elif period == 'yearly':
+        cash_flow = df.resample('Y').sum()['net_cash_flow']
+    else:
+        cash_flow = df.resample('M').sum()['net_cash_flow']
+
+    print("Cash Flow:")
+    print(cash_flow)
+
+    model = auto_arima(cash_flow, seasonal=True, m=seasonal_period,
+                       stepwise=True, trace=True, error_action='ignore', suppress_warnings=True)
+
+    print("Best SARIMA Model:")
+    print(model.summary())
+
+    mse = mean_squared_error(cash_flow, model.predict_in_sample())
+    mae = mean_absolute_error(cash_flow, model.predict_in_sample())
+
+    forecast = model.predict(n_periods=forecast_steps)
+    predictions = []
+
+    if period == 'daily':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(days=i + 1)
+            predictions.append({
+                'date': date.strftime('%Y-%m-%d'),
+                'predicted_cash_flow': float(forecast[i])
+            })
+    elif period == 'weekly':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(weeks=i + 1)
+            predictions.append({
+                'date': date.strftime('%Y-%W%U'),
+                'predicted_cash_flow': float(forecast[i])
+            })
+    elif period == 'bi-weekly':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(weeks=2 * (i + 1))
+            predictions.append({
+                'date': date.strftime('%Y-%W%U'),
+                'predicted_cash_flow': float(forecast[i])
+            })
+    elif period == 'quarterly':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(months=3 * (i + 1))
+            predictions.append({
+                'date': date.strftime('%Y-Q{}').format((date.month - 1) // 3 + 1),
+                'predicted_cash_flow': float(forecast[i])
+            })
+    elif period == 'yearly':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(years=i + 1)
+            predictions.append({
+                'date': date.strftime('%Y'),
+                'predicted_cash_flow': float(forecast[i])
+            })
+    else:
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(months=i + 1)
+            predictions.append({
+                'date': date.strftime('%Y-%m'),
+                'predicted_cash_flow': float(forecast[i])
+            })
+
+    return {
+        "predictions": predictions,
+        "mse": mse,
+        "mae": mae
+    }
+
+
+def perform_cash_outflow_projection(business, period, forecast_steps, seasonal_period):
+    expenses = list(Expense.objects.filter(business=business).values('date', 'amount'))
+
+    if not expenses:
+        raise ValueError("No expense data found for the business.")
+
+    df_expenses = pd.DataFrame(expenses)
+    df_expenses['amount'] = pd.to_numeric(df_expenses['amount'], errors='coerce')
+
+    if 'date' not in df_expenses.columns:
+        raise KeyError("'date' column missing from expense data.")
+
+    df_expenses.sort_values('date', inplace=True)
+    df_expenses.rename(columns={'amount': 'outflow'}, inplace=True)
+    df_expenses['date'] = pd.to_datetime(df_expenses['date'])
+    df_expenses.set_index('date', inplace=True)
+
+    if period == 'daily':
+        outflow = df_expenses.resample('D').sum()['outflow']
+    elif period == 'weekly':
+        outflow = df_expenses.resample('W').sum()['outflow']
+    elif period == 'bi-weekly':
+        outflow = df_expenses.resample('2W').sum()['outflow']
+    elif period == 'quarterly':
+        outflow = df_expenses.resample('Q').sum()['outflow']
+    elif period == 'yearly':
+        outflow = df_expenses.resample('Y').sum()['outflow']
+    else:
+        outflow = df_expenses.resample('M').sum()['outflow']
+
+    print("Outflow:")
+    print(outflow)
+
+    # Use auto_arima for parameter tuning
+    model = auto_arima(outflow, seasonal=True, m=seasonal_period,
+                       stepwise=True, trace=True, error_action='ignore', suppress_warnings=True)
+
+    print("Best SARIMA Model:")
+    print(model.summary())
+
+    mse = mean_squared_error(outflow, model.predict_in_sample())
+    mae = mean_absolute_error(outflow, model.predict_in_sample())
+
+    forecast = model.predict(n_periods=forecast_steps)
+    predictions = []
+
+    if period == 'daily':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(days=i + 1)
+            predictions.append({
+                'date': date.strftime('%Y-%m-%d'),
+                'predicted_outflow': float(forecast[i])
+            })
+    elif period == 'weekly':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(weeks=i + 1)
+            predictions.append({
+                'date': date.strftime('%Y-%W%U'),
+                'predicted_outflow': float(forecast[i])
+            })
+    elif period == 'bi-weekly':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(weeks=2 * (i + 1))
+            predictions.append({
+                'date': date.strftime('%Y-%W%U'),
+                'predicted_outflow': float(forecast[i])
+            })
+    elif period == 'quarterly':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(months=3 * (i + 1))
+            predictions.append({
+                'date': date.strftime('%Y-Q{}').format((date.month - 1) // 3 + 1),
+                'predicted_outflow': float(forecast[i])
+            })
+    elif period == 'yearly':
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(years=i + 1)
+            predictions.append({
+                'date': date.strftime('%Y'),
+                'predicted_outflow': float(forecast[i])
+            })
+    else:
+        for i in range(forecast_steps):
+            date = pd.Timestamp.today() + pd.DateOffset(months=i + 1)
+            predictions.append({
+                'date': date.strftime('%Y-%m'),
+                'predicted_outflow': float(forecast[i])
+            })
+
+    return {
+        "predictions": predictions,
+        "mse": mse,
+        "mae": mae
+    }
+
+
+def generate_report_based_on_date_range(business, start_date=None, end_date=None):
+    incomes = list(Income.objects.filter(business=business).values('date', 'amount'))
+    expenses = list(Expense.objects.filter(business=business).values('date', 'amount'))
+
+    if not incomes:
+        raise ValueError("No income data found for the business.")
+    if not expenses:
+        raise ValueError("No expense data found for the business.")
+
+    df_incomes = pd.DataFrame(incomes)
+    df_expenses = pd.DataFrame(expenses)
+    df_incomes.sort_values('date', inplace=True)
+    df_expenses.sort_values('date', inplace=True)
+    df_incomes.rename(columns={'amount': 'inflow'}, inplace=True)
+    df_expenses.rename(columns={'amount': 'outflow'}, inplace=True)
+    df = pd.merge(df_incomes, df_expenses, on='date', how='outer').fillna(0)
+    df['net_cash_flow'] = df['inflow'] - df['outflow']
+
+    df['date'] = pd.to_datetime(df['date']).dt.date
+
+    if start_date and end_date:
+        df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
+
+    print(df.to_dict)
+    return df.to_dict('records')
+
+
+def generate_report_based_on_period(business, period=None):
+    report_data = generate_report_based_on_date_range(business)
+    df = pd.DataFrame(report_data)
+
+    df['date'] = pd.to_datetime(df['date'])
+    df.set_index('date', inplace=True)
+
+    if period == 'monthly':
+        report = df.resample('M').sum()
+    elif period == 'quarterly':
+        report = df.resample('Q').sum()
+    elif period == 'yearly':
+        report = df.resample('A').sum()
+    else:
+        raise ValueError("Invalid period specified.")
+
+    report['net_cash_flow'] = report['inflow'] - report['outflow']
+
+    report.reset_index(inplace=True)
+    print(f'Final report head:\n{report.head()}')
+
+    return report.to_dict('records')
+
+
+def calculate_total_pending_receivables(business):
+    receivables = AccountsReceivable.objects.filter(business=business, status='Pending')
+    total_pending_receivable = receivables.aggregate(total=Sum('amount_due'))['total'] or 0
+    return total_pending_receivable
+
+
+def calculate_total_pending_payables_for_period(business, start_date, end_date):
+    payables = AccountsPayable.objects.filter(
+        business=business,
+        status='Pending',
+        due_date__gte=start_date,
+        due_date__lte=end_date
+    )
+    total_pending_payable = payables.aggregate(total=Sum('amount_due'))['total'] or 0
+    return total_pending_payable
+
+
+def calculate_total_pending_payables(business):
+    payable = AccountsPayable.objects.filter(business=business, status='Pending')
+    total_pending_payable = payable.aggregate(total=Sum('amount_due'))['total'] or 0
+    return total_pending_payable
+
+
+def calculate_total_pending_receivables_for_period(business, start_date, end_date):
+    receivables = AccountsReceivable.objects.filter(
+        business=business,
+        status='Pending',
+        due_date__gte=start_date,
+        due_date__lte=end_date
+    )
+    total_pending_receivables = receivables.aggregate(total=Sum('amount_due'))['total'] or 0
+    return total_pending_receivables
+
+
+def calculate_remaining_balance(business):
+    total_pending_receivables = calculate_total_pending_receivables(business)
+    total_pending_payable = calculate_total_pending_payables(business)
+    remaining_balance = total_pending_receivables - total_pending_payable
+    return {
+        "total_pending_receivables": total_pending_receivables,
+        "total_pending_payable": total_pending_payable,
+        "remaining_balance": remaining_balance
+    }
+
+
+def calculate_remaining_balance_for_period(business, start_date, end_date):
+    total_pending_receivable = calculate_total_pending_receivables_for_period(business, start_date, end_date)
+    total_pending_payable = calculate_total_pending_payables_for_period(business, start_date,
+                                                                        end_date)
+    remaining_balance = total_pending_receivable - total_pending_payable
+    return {
+        "total_pending_receivables_for_period": total_pending_receivable,
+        "total_pending_payable_for_period": total_pending_payable,
+        "remaining_balance_for_period": remaining_balance
+    }
+
+
+def calculate_real_time_data(alert_threshold):
+    incomes = list(Income.objects.values('date', 'amount'))
+    expenses = list(Expense.objects.values('date', 'amount'))
+
+    df_incomes = pd.DataFrame(incomes)
+    df_expenses = pd.DataFrame(expenses)
+
+    df_incomes.sort_values('date', inplace=True)
+    df_expenses.sort_values('date', inplace=True)
+
+    df_incomes.rename(columns={'amount': 'inflow'}, inplace=True)
+    df_expenses.rename(columns={'amount': 'outflow'}, inplace=True)
+
+    df = pd.merge(df_incomes, df_expenses, on='date', how='outer').fillna(0)
+    df['net_cash_flow'] = df['inflow'] - df['outflow']
+
+    real_time_data = df.to_dict('records')
+
+    alerts = []
+    for entry in real_time_data:
+        if entry['net_cash_flow'] < alert_threshold:
+            alerts.append(f"Alert! Net cash flow on {entry['date']} is below the threshold of {alert_threshold}. Current net cash flow is: {entry['net_cash_flow']}")
+
+    return real_time_data, alerts
 
 
 def calculate_remaining_useful_life_years(asset):
@@ -224,6 +563,79 @@ def calculate_total_liabilities(liability_queryset):
 def calculate_total_assets(asset_queryset):
     total_assets = asset_queryset.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
     return total_assets
+
+
+def calculate_interest_accrual(liability):
+    interest_rate = Decimal(liability.interest_rate)
+    amount = Decimal(liability.amount)
+    days_since_incurred = (date.today() - liability.date_incurred).days
+    interest_accrued = amount * interest_rate * days_since_incurred / 365
+    return interest_accrued
+
+
+def track_loan_payments(liability):
+    total_paid = PaymentSchedule.objects.filter(liability=liability).aggregate(Sum('installment_amount'))[
+                     'installment_amount__sum'] or Decimal('0.00')
+    remaining_balance = Decimal(liability.amount) - total_paid
+    return total_paid, remaining_balance
+
+
+def calculate_remaining_payments(payment_schedule):
+    total_payments = (
+                             payment_schedule.end_date - payment_schedule.start_date).days // payment_schedule.get_payment_frequency_in_days()
+    payments_made = (date.today() - payment_schedule.start_date).days // payment_schedule.get_payment_frequency_in_days
+    remaining_payments = total_payments - payments_made
+    return remaining_payments
+
+
+def get_payment_frequency_in_days(payment_frequency):
+    payment_frequencies = {
+        'Weekly': 7,
+        'Bi-Weekly': 14,
+        'Monthly': 30,
+        'Quarterly': 90,
+        'Semi-Annually': 180,
+        'Annually': 365,
+    }
+    return payment_frequencies.get(payment_frequency, 0)
+
+
+def generate_payment_schedule(principal, interest_rate, term_years, payment_frequency, start_date):
+    term_months = term_years * 12
+    monthly_interest_rate = Decimal(interest_rate) / Decimal('100') / Decimal('12')
+    monthly_payment = principal * monthly_interest_rate / (1 - (1 + monthly_interest_rate) ** -term_months)
+
+    payment_frequencies = {
+        'Weekly': 52,
+        'Bi-Weekly': 26,
+        'Monthly': 12,
+        'Quarterly': 4,
+        'Semi-Annually': 2,
+        'Annually': 1,
+    }
+    num_payments_per_year = Decimal(payment_frequencies[payment_frequency])
+    payment_interval_days = Decimal(365) // num_payments_per_year
+
+    payments = []
+    remaining_principal = principal
+    total_payments = int(term_years * num_payments_per_year)
+    for i in range(total_payments):
+        interest_for_period = remaining_principal * (monthly_interest_rate * 12 / num_payments_per_year)
+        principal_for_period = monthly_payment / (12 / num_payments_per_year) - interest_for_period
+        payment_date = start_date + timedelta(days=int(i * payment_interval_days))
+        remaining_principal -= principal_for_period
+        payments.append({
+            'date': payment_date,
+            'principal': principal_for_period,
+            'interest': interest_for_period,
+            'remaining_principal': remaining_principal
+        })
+
+    return payments
+
+
+def calculate_current_ratio(current_assets, current_liabilities):
+    return current_assets / current_liabilities
 
 # def generate_income_statement(business, year=None, start_date=None, end_date=None, period='monthly'):
 #     if year:
