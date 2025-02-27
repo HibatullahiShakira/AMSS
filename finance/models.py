@@ -116,11 +116,16 @@ class Asset(models.Model):
         date_acquired = Decimal(str(self.date_acquired))
         useful_life_int = int(str(self.useful_life))
 
+        current_interest_rate = Decimal(0.3480)
+        current_inflation_rate = Decimal(0.275)
+
+        adjusted_rate = (1 + current_interest_rate) * (1 + current_inflation_rate) - 1
+
         if self.is_appreciating:
             if not self.appreciation_rate:
                 years = date.today().year - date_acquired
                 if years > 0:
-                    self.appreciation_rate = ((current_value - amount) / amount) * 100
+                    self.appreciation_rate = ((current_value - amount) / amount) * 100 + adjusted_rate * 100
                 else:
                     self.appreciation_rate = Decimal(3.0)
             self.yearly_appreciation_rate = self.appreciation_rate
@@ -128,20 +133,19 @@ class Asset(models.Model):
         else:
             if not self.depreciation_rate:
                 if self.valuation_method == 'Straight-Line':
-                    self.depreciation_rate = ((amount - residual_value) / useful_life) / amount * 100
+                    self.depreciation_rate = (((amount - residual_value) / useful_life) / amount + adjusted_rate) * 100
                 elif self.valuation_method == 'Declining-Balance':
-                    self.depreciation_rate = (1 - (residual_value / amount) ** useful_life) * 100
+                    self.depreciation_rate = ((1 - (residual_value / amount) ** useful_life) + adjusted_rate) * 100
                 elif self.valuation_method == 'Units-of-Production':
-                    self.depreciation_rate = ((amount - residual_value) / useful_life) * 100
+                    self.depreciation_rate = (((amount - residual_value) / useful_life) + adjusted_rate) * 100
                 elif self.valuation_method == 'Sum-of-the-Years-Digits':
                     total_years = sum(range(1, useful_life_int + 1))
-                    self.depreciation_rate = ((amount - residual_value) * (useful_life / total_years)) * 100
+                    self.depreciation_rate = (((amount - residual_value) * (
+                                useful_life / total_years)) + adjusted_rate) * 100
                 elif self.valuation_method == 'Double-Declining-Balance':
-                    self.depreciation_rate = (2 / useful_life) * 100
+                    self.depreciation_rate = ((2 / useful_life) + adjusted_rate) * 100
             self.yearly_depreciation_rate = self.depreciation_rate
             self.monthly_depreciation_rate = self.depreciation_rate / 12
-
-        super(Asset, self).save(*args, **kwargs)
 
 
 class Liability(models.Model):
@@ -186,6 +190,7 @@ class PaymentSchedule(models.Model):
     ])
     start_date = models.DateField()
     end_date = models.DateField(blank=True, null=True)
+    installment_amount = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=False)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
 
@@ -198,6 +203,7 @@ class PaymentInstallment(models.Model):
     date = models.DateField()
     principal = models.DecimalField(max_digits=20, decimal_places=2)
     interest = models.DecimalField(max_digits=20, decimal_places=2)
+    monthly_payment = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
     remaining_principal = models.DecimalField(max_digits=20, decimal_places=2)
 
     def __str__(self):

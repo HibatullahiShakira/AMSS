@@ -196,9 +196,25 @@ class ScenarioQueryParamsSerializer(serializers.Serializer):
 
 
 class LiabilitySerializer(BusinessAwareSerializer):
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    business = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
     class Meta:
         model = Liability
         fields = '__all__'
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        user = request.user if not isinstance(request.user, TokenUser) else User.objects.get(id=request.user.id)
+
+        business = getattr(user, 'business', None)
+        if not business:
+            raise serializers.ValidationError("User has no associated business.")
+
+        attrs['business'] = business
+        attrs['user'] = user
+
+        return attrs
 
 
 class PaymentScheduleSerializer(BusinessAwareSerializer):
@@ -302,17 +318,18 @@ class GeneratePaymentScheduleSerializer(serializers.Serializer):
                 date=payment['date'],
                 principal=payment['principal'],
                 interest=payment['interest'],
+                monthly_payment=payment['monthly_payment'],
                 remaining_principal=payment['remaining_principal']
             )
             payment_installments.append(payment_installment)
 
         PaymentInstallment.objects.bulk_create(payment_installments)
 
-        # Prepare JSON serializable response
         installments_data = [
             {
                 'date': installment.date,
                 'principal': str(installment.principal),
+                'monthly_payment': installment.monthly_payment,
                 'interest': str(installment.interest),
                 'remaining_principal': str(installment.remaining_principal)
             } for installment in payment_installments
@@ -396,4 +413,11 @@ class RealTimeMonitoringSerializer(serializers.Serializer):
     threshold = serializers.IntegerField(required=True)
 
 
+class ScenarioAnalysisSerializer(serializers.Serializer):
+    income_adjustment = serializers.FloatField(default=0)
+    expense_adjustment = serializers.FloatField(default=0)
+    inflation_rate = serializers.FloatField(default=0.02)
+    interest_rate = serializers.FloatField(default=0.05)
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
 

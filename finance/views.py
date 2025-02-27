@@ -1,16 +1,17 @@
 from datetime import datetime
 
+from django.db.models import Sum
 from django.http import Http404, JsonResponse
 from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import action
 from rest_framework_simplejwt.models import TokenUser
-import pandas as pd
 from users.models import User
 from .helpers import generate_asset_project_simulations, get_comprehensive_breakdown, explain_scenario_keys, \
-    generate_asset_report, calculate_total_liabilities, calculate_total_assets, calculate_interest_accrual, \
+    generate_asset_report, calculate_total_assets, calculate_interest_accrual, \
     track_loan_payments, perform_projection, calculate_remaining_balance, \
     calculate_remaining_balance_for_period, generate_report_based_on_period, generate_report_based_on_date_range, \
-    calculate_real_time_data, perform_cash_outflow_projection
+    calculate_real_time_data, perform_cash_outflow_projection, create_financial_dataframe
+
 from .models import Income, Expense, Asset, Liability, PaymentSchedule, Creditor, Collateral, Customer, Supplier, \
     AccountsReceivable, AccountsPayable
 from .serializers import IncomeSerializer, ExpenseSerializer, AssetListSerializer, AssetDetailSerializer, \
@@ -18,7 +19,7 @@ from .serializers import IncomeSerializer, ExpenseSerializer, AssetListSerialize
     ScenarioQueryParamsSerializer, LiabilitySerializer, PaymentScheduleSerializer, CreditorSerializer, \
     CollateralSerializer, GeneratePaymentScheduleSerializer, CustomerSerializer, SupplierSerializer, \
     ProjectionInputSerializer, PendingPaymentSummaryForPeriodSerializer, PendingPaymentSummarySerializer, \
-    DateRangeSerializer, PeriodSerializer, RealTimeMonitoringSerializer
+    DateRangeSerializer, PeriodSerializer, RealTimeMonitoringSerializer, ScenarioAnalysisSerializer
 from .permissions import IsOwnerAdminManagerOrReadonly, IsOwnerOrAdmin
 
 
@@ -219,15 +220,19 @@ class LiabilityViewSet(BusinessOwnerViewSet):
     @action(detail=False, methods=['get'], url_path='total-liabilities')
     def total_liabilities(self, request):
         user = request.user
+        if isinstance(user, TokenUser):
+            user = User.objects.get(id=user.id)
+
         business = getattr(user, 'business', None)
-
         if business is None:
-            return JsonResponse({"error": "User has no associated business."}, status=400)
+            return JsonResponse({"error": "User is not associated with any business."}, status=400)
 
-        liabilities = Liability.objects.filter(business=business)
-        total = calculate_total_liabilities(liabilities)
+        total_amount = Liability.objects.filter(business=business).aggregate(total=Sum('amount'))['total']
 
-        return JsonResponse({"total_liabilities": total})
+        if total_amount is None:
+            total_amount = 0.00
+
+        return JsonResponse({"total_liabilities": total_amount})
 
     @action(detail=True, methods=['get'], url_path='debt_management')
     def debt_management(self, request, pk=None):
@@ -509,3 +514,23 @@ class CashFlowProjectionViewSet(viewsets.ViewSet):
         else:
             return JsonResponse(serializer.errors, status=400)
 
+    @action(detail=False, methods=['get'])
+    def get_face_value_analysis(self, request):
+        user = request.user
+        if isinstance(user, TokenUser):
+            user = User.objects.get(id=user.id)
+        business = getattr(user, 'business', None)
+        if business is None:
+            raise serializers.ValidationError("User has no associated business.")
+
+        serializer = DateRangeSerializer(data=request.data)
+        if serializer.is_valid():
+            try:
+                dataframe = create_financial_dataframe(business)
+                return JsonResponse(dataframe, safe=False)
+            except ValueError as e:
+                return JsonResponse({"error": str(e)}, status=400)
+            except KeyError as e:
+                return JsonResponse({"error": str(e)}, status=400)
+        else:
+            return JsonResponse(serializer.errors, status=400)

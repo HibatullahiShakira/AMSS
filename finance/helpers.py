@@ -7,7 +7,6 @@ from finance.models import PaymentSchedule, Income, Expense, AccountsReceivable,
 import pandas as pd
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from pmdarima import auto_arima
-from django.db import models
 
 
 def perform_projection(business, period, forecast_steps, seasonal_period):
@@ -148,7 +147,6 @@ def perform_cash_outflow_projection(business, period, forecast_steps, seasonal_p
     print("Outflow:")
     print(outflow)
 
-    # Use auto_arima for parameter tuning
     model = auto_arima(outflow, seasonal=True, m=seasonal_period,
                        stepwise=True, trace=True, error_action='ignore', suppress_warnings=True)
 
@@ -340,9 +338,79 @@ def calculate_real_time_data(alert_threshold):
     alerts = []
     for entry in real_time_data:
         if entry['net_cash_flow'] < alert_threshold:
-            alerts.append(f"Alert! Net cash flow on {entry['date']} is below the threshold of {alert_threshold}. Current net cash flow is: {entry['net_cash_flow']}")
+            alerts.append(
+                f"Alert! Net cash flow on {entry['date']} is below the threshold of {alert_threshold}. Current net cash flow is: {entry['net_cash_flow']}")
 
     return real_time_data, alerts
+
+
+def create_financial_dataframe(business):
+    incomes = list(Income.objects.filter(business=business).values('date', 'amount'))
+    expenses = list(Expense.objects.filter(business=business).values('date', 'amount'))
+
+    if not incomes:
+        raise ValueError("No income data found for the business.")
+    if not expenses:
+        raise ValueError("No expense data found for the business.")
+
+    df_incomes = pd.DataFrame(incomes)
+    df_expenses = pd.DataFrame(expenses)
+
+    df_incomes['amount'] = pd.to_numeric(df_incomes['amount'], errors='coerce')
+    df_expenses['amount'] = pd.to_numeric(df_expenses['amount'], errors='coerce')
+
+    if 'date' not in df_incomes.columns or 'date' not in df_expenses.columns:
+        raise KeyError("'date' column missing from income or expense data.")
+
+    df_incomes['date'] = pd.to_datetime(df_incomes['date'])
+    df_expenses['date'] = pd.to_datetime(df_expenses['date'])
+
+    df_incomes.sort_values('date', inplace=True)
+    df_expenses.sort_values('date', inplace=True)
+
+    df_incomes.rename(columns={'amount': 'income'}, inplace=True)
+    df_expenses.rename(columns={'amount': 'expense'}, inplace=True)
+
+    df = pd.merge(df_incomes, df_expenses, on='date', how='outer').fillna(0)
+
+    df['difference'] = df['income'] - df['expense']
+
+    inflation_rate = 0.3480
+    interest_rate = 0.275
+
+    df['inflation_rate'] = inflation_rate
+    df['interest_rate'] = interest_rate
+
+    df['balance_brought_down'] = df['difference'].cumsum()
+
+    adjusted_rate = (1 + interest_rate) * (1 + inflation_rate) - 1
+    df['face_value'] = df['difference'] / (1 + adjusted_rate)
+
+    df.set_index('date', inplace=True)
+
+    return df.reset_index().to_dict('records')
+
+
+def scenario_analysis(business, income_adjustment=0, expense_adjustment=0, inflation_rate=0.3480, interest_rate=0.2750,
+                      start_date=None, end_date=None):
+    dataframe = create_financial_dataframe(business)
+    df = pd.DataFrame(dataframe)
+    df.set_index('date', inplace=True)
+
+    df['income'] *= (1 + income_adjustment)
+    df['expense'] *= (1 + expense_adjustment)
+
+    df['difference'] = df['income'] - df['expense']
+
+    df['inflation_rate'] = inflation_rate
+    df['interest_rate'] = interest_rate
+
+    df['balance_brought_down'] = df['difference'].cumsum()
+
+    adjusted_rate = (1 + interest_rate) * (1 + inflation_rate) - 1
+    df['face_value'] = df['difference'] / (1 + adjusted_rate)
+
+    return df.reset_index().to_dict('records')
 
 
 def calculate_remaining_useful_life_years(asset):
@@ -555,11 +623,6 @@ def calculate_total_expenses(expense_queryset):
     return total_expense
 
 
-def calculate_total_liabilities(liability_queryset):
-    total_liabilities = liability_queryset.aggregate(Sum('amount'))['amount_sum'] or Decimal('0.00')
-    return total_liabilities
-
-
 def calculate_total_assets(asset_queryset):
     total_assets = asset_queryset.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
     return total_assets
@@ -613,30 +676,28 @@ def generate_payment_schedule(principal, interest_rate, term_years, payment_freq
         'Semi-Annually': 2,
         'Annually': 1,
     }
-    num_payments_per_year = Decimal(payment_frequencies[payment_frequency])
-    payment_interval_days = Decimal(365) // num_payments_per_year
+    num_payments_per_year = payment_frequencies[payment_frequency]
+    payment_interval_days = 365 / num_payments_per_year
 
     payments = []
     remaining_principal = principal
     total_payments = int(term_years * num_payments_per_year)
+
     for i in range(total_payments):
-        interest_for_period = remaining_principal * (monthly_interest_rate * 12 / num_payments_per_year)
-        principal_for_period = monthly_payment / (12 / num_payments_per_year) - interest_for_period
+        periodic_interest_rate = monthly_interest_rate * 12 / num_payments_per_year
+        interest_for_period = remaining_principal * periodic_interest_rate
+        principal_for_period = monthly_payment - interest_for_period
         payment_date = start_date + timedelta(days=int(i * payment_interval_days))
         remaining_principal -= principal_for_period
         payments.append({
             'date': payment_date,
-            'principal': principal_for_period,
+            'principal': principal,
             'interest': interest_for_period,
+            'monthly_payment': monthly_payment,
             'remaining_principal': remaining_principal
         })
 
     return payments
-
-
-def calculate_current_ratio(current_assets, current_liabilities):
-    return current_assets / current_liabilities
-
 # def generate_income_statement(business, year=None, start_date=None, end_date=None, period='monthly'):
 #     if year:
 #         income = Income.objects.filter(business=business, date__year=year)
