@@ -29,7 +29,7 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 # Application definition
 
@@ -48,9 +48,11 @@ INSTALLED_APPS = [
     'django_filters',
     'djoser',
     'debug_toolbar',
+    'corsheaders',
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -137,7 +139,7 @@ AUTH_USER_MODEL = 'users.User'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES':
         (
-            'rest_framework_simplejwt.authentication.JWTStatelessUserAuthentication',
+            'rest_framework_simplejwt.authentication.JWTAuthentication',
         ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -158,7 +160,7 @@ DJOSER = {
     'SERIALIZERS': {
         'user_create': 'djoser.serializers.UserCreateSerializer',
         'token_create': 'djoser.serializers.TokenCreateSerializer',
-        'current_user': 'djoser.serializers.UserSerializer',
+        'current_user': 'users.serializers.CustomUserSerializer',
     },
 }
 
@@ -181,3 +183,5 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # EMAIL_HOST_PASSWORD = os.getenv('EMAIL_PASSWORD')
 # DEFAULT_FROM_EMAIL = 'BusinessEmail@gmail.com'
 #
+
+CORS_ALLOW_ALL_ORIGINS = True

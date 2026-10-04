@@ -5,7 +5,7 @@ from rest_framework import serializers
 
 from .helpers import generate_payment_schedule
 from .models import Income, Business, Expense, Asset, Liability, PaymentSchedule, Creditor, Collateral, \
-    PaymentInstallment, Customer, Supplier, AccountsReceivable, AccountsPayable, CashFlowForecast
+    PaymentInstallment, Customer, Supplier, AccountsReceivable, AccountsPayable, CashFlowForecast, Employee
 from users.models import User
 from rest_framework_simplejwt.models import TokenUser
 
@@ -352,12 +352,18 @@ class GeneratePaymentScheduleSerializer(serializers.Serializer):
 
 
 class CustomerSerializer(BusinessAwareSerializer):
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    business = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
     class Meta:
         model = Customer
         fields = '__all__'
 
 
 class SupplierSerializer(BusinessAwareSerializer):
+    user = serializers.HiddenField(default=serializers.CurrentUserDefault())
+    business = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
     class Meta:
         model = Supplier
         fields = '__all__'
@@ -421,3 +427,18 @@ class ScenarioAnalysisSerializer(serializers.Serializer):
     start_date = serializers.DateField(required=False)
     end_date = serializers.DateField(required=False)
 
+class EmployeeSerializer(BusinessAwareSerializer):
+    business = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
+    class Meta:
+        model = Employee
+        fields = '__all__'
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        user = request.user if not isinstance(request.user, TokenUser) else User.objects.get(id=request.user.id)
+        business = getattr(user, 'business', None)
+        if not business:
+            raise serializers.ValidationError("User has no associated business.")
+        attrs['business'] = business
+        return attrs

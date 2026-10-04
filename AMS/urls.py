@@ -23,6 +23,7 @@ from users.views import CustomUserViewSet
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('finance/', include('finance.urls')),
+    path('billing/', include('billing.urls')),
     path('auth/', include('djoser.urls')),
     path('auth/', include('djoser.urls.jwt')),
     path('user-business/', include('users.urls')),

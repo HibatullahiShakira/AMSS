@@ -50,10 +50,17 @@ class Expense(models.Model):
         ('Miscellaneous', 'miscellaneous')
     ]
 
+    EXPENSE_TYPE_CHOICES = [
+        ('OPEX', 'Operating Expense'),
+        ('STOCK', 'Stock / Goods'),
+    ]
+
     date = models.DateTimeField(auto_now_add=True)
     amount = models.DecimalField(max_digits=20, decimal_places=2)
     expense_category = models.CharField(max_length=50, choices=EXPENSE_CHOICES)
+    expense_type = models.CharField(max_length=20, choices=EXPENSE_TYPE_CHOICES, default='OPEX')
     description = models.CharField(max_length=255)
+    product = models.ForeignKey('billing.Product', on_delete=models.SET_NULL, null=True, blank=True, related_name='stock_purchases')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     currency = models.CharField(max_length=15, choices=CURRENCY_CHOICES)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
@@ -285,3 +292,16 @@ class CashFlowForecast(models.Model):
     updated_at = models.DateField(auto_now=True)
     business = models.ForeignKey(Business, on_delete=models.CASCADE, default=1)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)
+
+
+class Employee(models.Model):
+    business = models.ForeignKey(Business, on_delete=models.CASCADE)
+    name = models.CharField(max_length=255)
+    role = models.CharField(max_length=100)
+    salary = models.DecimalField(max_digits=12, decimal_places=2)
+    start_date = models.DateField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} - {self.role}"

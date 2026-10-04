@@ -12,14 +12,28 @@ from .helpers import generate_asset_project_simulations, get_comprehensive_break
     calculate_remaining_balance_for_period, generate_report_based_on_period, generate_report_based_on_date_range, \
     calculate_real_time_data, perform_cash_outflow_projection, create_financial_dataframe
 
+# Asset Tracker enhanced imports
+from .helpers_asset import (
+    generate_depreciation_schedule,
+    compute_asset_book_value,
+    detect_asset_liability_mismatches,
+    generate_asset_register_report,
+)
+from .models_asset import AssetMaintenanceLog, AssetDisposal, DepreciationSchedule
+from .serializers_asset import (
+    AssetMaintenanceLogSerializer,
+    AssetDisposalSerializer,
+    DepreciationScheduleSerializer,
+)
+
 from .models import Income, Expense, Asset, Liability, PaymentSchedule, Creditor, Collateral, Customer, Supplier, \
-    AccountsReceivable, AccountsPayable
+    AccountsReceivable, AccountsPayable, Employee
 from .serializers import IncomeSerializer, ExpenseSerializer, AssetListSerializer, AssetDetailSerializer, \
     ScenarioSerializer, RiskToleranceSerializer, StorySerializer, ExplainScenarioSerializer, \
     ScenarioQueryParamsSerializer, LiabilitySerializer, PaymentScheduleSerializer, CreditorSerializer, \
     CollateralSerializer, GeneratePaymentScheduleSerializer, CustomerSerializer, SupplierSerializer, \
     ProjectionInputSerializer, PendingPaymentSummaryForPeriodSerializer, PendingPaymentSummarySerializer, \
-    DateRangeSerializer, PeriodSerializer, RealTimeMonitoringSerializer, ScenarioAnalysisSerializer
+    DateRangeSerializer, PeriodSerializer, RealTimeMonitoringSerializer, ScenarioAnalysisSerializer, EmployeeSerializer
 from .permissions import IsOwnerAdminManagerOrReadonly, IsOwnerOrAdmin
 
 
@@ -149,6 +163,85 @@ class AssetViewSet(BusinessOwnerViewSet):
         total = calculate_total_assets(assets)
 
         return JsonResponse({"total_assets": total})
+
+    @action(detail=True, methods=['post'], url_path='generate-depreciation-schedule')
+    def generate_depreciation_schedule(self, request, pk=None):
+        """Generate and store the depreciation schedule for an asset."""
+        asset = self.get_object()
+        schedule = generate_depreciation_schedule(asset)
+        return JsonResponse({
+            'message': f"Generated {len(schedule)} depreciation periods.",
+            'schedule': schedule
+        })
+
+    @action(detail=True, methods=['get'], url_path='depreciation-schedule')
+    def get_depreciation_schedule(self, request, pk=None):
+        """Retrieve the existing depreciation schedule for an asset."""
+        asset = self.get_object()
+        schedules = DepreciationSchedule.objects.filter(asset=asset).order_by('period_number')
+        serializer = DepreciationScheduleSerializer(schedules, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='book-value')
+    def book_value(self, request, pk=None):
+        """Get the current calculated book value."""
+        asset = self.get_object()
+        value = compute_asset_book_value(asset)
+        return JsonResponse({'current_book_value': round(value, 2)})
+
+    @action(detail=False, methods=['get'], url_path='mismatch-detection')
+    def mismatch_detection(self, request):
+        """Detect asset-liability mismatches (Negative Equity, Drag, Ghost assets)."""
+        business = self.get_business()
+        if not business:
+            return JsonResponse({"error": "User has no associated business."}, status=400)
+        
+        alerts = detect_asset_liability_mismatches(business)
+        return JsonResponse(alerts)
+
+    @action(detail=False, methods=['get'], url_path='asset-register')
+    def asset_register(self, request):
+        """Full asset register report with current book values."""
+        business = self.get_business()
+        if not business:
+            return JsonResponse({"error": "User has no associated business."}, status=400)
+            
+        report = generate_asset_register_report(business)
+        return JsonResponse(report)
+
+    @action(detail=True, methods=['post'], url_path='dispose')
+    def dispose_asset(self, request, pk=None):
+        """Record the disposal of an asset."""
+        asset = self.get_object()
+        
+        # Check if already disposed
+        if hasattr(asset, 'disposal'):
+            return JsonResponse({'error': 'Asset is already disposed.'}, status=400)
+            
+        serializer = AssetDisposalSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        
+        # Inject the asset and current book value
+        book_value = compute_asset_book_value(asset)
+        serializer.save(asset=asset, book_value_at_disposal=book_value)
+        
+        return JsonResponse(serializer.data, status=201)
+
+    @action(detail=True, methods=['get', 'post'], url_path='maintenance-logs')
+    def maintenance_logs(self, request, pk=None):
+        """View or add maintenance logs for an asset."""
+        asset = self.get_object()
+        
+        if request.method == 'GET':
+            logs = AssetMaintenanceLog.objects.filter(asset=asset).order_by('-date')
+            serializer = AssetMaintenanceLogSerializer(logs, many=True)
+            return Response(serializer.data)
+            
+        elif request.method == 'POST':
+            serializer = AssetMaintenanceLogSerializer(data=request.data, context={'request': request})
+            serializer.is_valid(raise_exception=True)
+            serializer.save(asset=asset)
+            return JsonResponse(serializer.data, status=201)
 
 
 class AssetProjectSimulation(viewsets.ViewSet):
@@ -534,3 +627,35 @@ class CashFlowProjectionViewSet(viewsets.ViewSet):
                 return JsonResponse({"error": str(e)}, status=400)
         else:
             return JsonResponse(serializer.errors, status=400)
+
+
+class EmployeeViewSet(BusinessOwnerViewSet):
+    queryset = Employee.objects.all()
+    serializer_class = EmployeeSerializer
+
+    @action(detail=False, methods=['post'], url_path='run-payroll')
+    def run_payroll(self, request):
+        business = self.get_business()
+        if not business:
+            return JsonResponse({'error': 'No business found'}, status=400)
+        
+        employees = Employee.objects.filter(business=business, is_active=True)
+        count = 0
+        total_amount = 0
+        
+        for emp in employees:
+            Expense.objects.create(
+                business=business,
+                user=request.user if not isinstance(request.user, TokenUser) else User.objects.get(id=request.user.id),
+                expense_category='Salaries',
+                amount=emp.salary,
+                description=f'Salary - {emp.name}',
+                currency='NGN'
+            )
+            count += 1
+            total_amount += float(emp.salary)
+            
+        return JsonResponse({
+            'message': f'Successfully ran payroll for {count} employees.',
+            'total_amount': total_amount
+        })
